@@ -1,0 +1,9 @@
+{
+    "id": "agenda-box",
+    "name": "Agenda Box",
+    "version": "1.0.0",
+    "minAppVersion": "0.15.0",
+    "description": "Creates a floating box that displays the contents of a note's Agenda section",
+    "author": "D'Arcy Norman",
+    "isDesktopOnly": false
+}
