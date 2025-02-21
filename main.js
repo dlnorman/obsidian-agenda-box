@@ -59,8 +59,14 @@ class AgendaView extends obsidian.ItemView {
     async onOpen() {
         this.contentEl.empty();
         
+        // Create container
         const container = this.contentEl.createDiv('agenda-container');
         
+        // Create header
+        const header = container.createDiv('agenda-header');
+        header.textContent = this.plugin.settings.headingText;
+        
+        // Create editable content area
         this.editableContent = container.createEl('textarea', {
             cls: 'agenda-content',
             attr: { 
@@ -68,22 +74,22 @@ class AgendaView extends obsidian.ItemView {
             }
         });
         
+        // Listen for content changes with debouncing
         let updateTimer = null;
         const handleInput = () => {
-            console.log('Input detected');
             if (updateTimer) {
                 clearTimeout(updateTimer);
             }
             updateTimer = setTimeout(() => {
-                console.log('Processing update');
                 this.handleAgendaEdit();
-            }, 100);
+            }, 250);
         };
 
         this.editableContent.addEventListener('input', handleInput);
         this.editableContent.addEventListener('paste', handleInput);
         this.editableContent.addEventListener('drop', handleInput);
 
+        // Initial content update
         this.updateAgendaContent();
     }
 
@@ -130,36 +136,37 @@ class AgendaView extends obsidian.ItemView {
             return;
         }
 
-        console.log('Handling agenda edit...');
         const editor = this.activeMarkdownView.editor;
         const doc = editor.getValue();
         const lines = doc.split('\n');
         const text = this.editableContent.value;
         
-        console.log('Current text:', text);
         const start = parseInt(this.editableContent.dataset.start);
         const end = parseInt(this.editableContent.dataset.end);
         
         let newContent;
         if (start === -1) {
-            console.log('Creating new section');
+            // If no section exists, create one at the end
             newContent = doc.trim() + '\n\n# ' + this.plugin.settings.headingText + '\n' + text;
         } else {
-            console.log('Updating existing section', {start, end});
+            // Update existing section
             const beforeSection = lines.slice(0, start + 1).join('\n');
             const afterSection = lines.slice(end).join('\n');
             newContent = beforeSection + '\n' + text + (afterSection ? '\n' + afterSection : '');
         }
         
+        // Store cursor position
         const cursorPos = this.editableContent.selectionStart;
+        
+        // Update the editor
         editor.setValue(newContent);
         
-        console.log('Content updated');
-        
+        // Update section boundaries
         const {start: newStart, end: newEnd} = this.findAgendaSection(newContent);
         this.editableContent.dataset.start = newStart;
         this.editableContent.dataset.end = newEnd;
         
+        // Restore cursor
         this.editableContent.selectionStart = cursorPos;
         this.editableContent.selectionEnd = cursorPos;
     }
@@ -289,6 +296,13 @@ class AgendaPlugin extends obsidian.Plugin {
                 flex-direction: column;
             }
             
+            .agenda-header {
+                font-weight: bold;
+                margin-bottom: 8px;
+                padding-bottom: 4px;
+                border-bottom: 1px solid var(--background-modifier-border);
+            }
+            
             .agenda-content {
                 width: 100%;
                 flex-grow: 1;
@@ -297,8 +311,7 @@ class AgendaPlugin extends obsidian.Plugin {
                 border-radius: 4px;
                 background-color: var(--background-primary);
                 font-family: var(--font-text);
-              /*  font-size: var(--font-text-size); */
-		font-size: small;
+                font-size: small;
                 line-height: var(--line-height-tight);
                 resize: none;
             }

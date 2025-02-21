@@ -1,7 +1,7 @@
 {
     "id": "obsidian-agenda-box",
     "name": "Agenda Box",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "minAppVersion": "0.15.0",
     "description": "Adds a tab to the Sidebar that lets you display and edit the contents of a note's Agenda section (or other section as determined in the settings for this plugin)",
     "author": "D'Arcy Norman",
