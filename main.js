@@ -62,9 +62,19 @@ class AgendaView extends obsidian.ItemView {
         // Create container
         const container = this.contentEl.createDiv('agenda-container');
         
+        // Create header row with button
+        const headerRow = container.createDiv('agenda-header-row');
+        
         // Create header
-        const header = container.createDiv('agenda-header');
+        const header = headerRow.createDiv('agenda-header');
         header.textContent = this.plugin.settings.headingText;
+        
+        // Create Convert button
+        const convertButton = headerRow.createDiv('agenda-button');
+        convertButton.textContent = "Create Headings";
+        convertButton.addEventListener('click', () => {
+            this.convertListToHeadings();
+        });
         
         // Create editable content area
         this.editableContent = container.createEl('textarea', {
@@ -169,6 +179,60 @@ class AgendaView extends obsidian.ItemView {
         // Restore cursor
         this.editableContent.selectionStart = cursorPos;
         this.editableContent.selectionEnd = cursorPos;
+    }
+    
+    convertListToHeadings() {
+        if (!this.activeMarkdownView) return;
+        
+        const content = this.editableContent.value;
+        if (!content) return;
+        
+        const lines = content.split('\n');
+        const documentContent = this.activeMarkdownView.editor.getValue();
+        
+        // Find the end of the current agenda section to know where to append content
+        const { end } = this.findAgendaSection(documentContent);
+        const documentLines = documentContent.split('\n');
+        
+        // Generate headings content
+        const headingsContent = this.generateHeadingsFromList(lines);
+        
+        // Insert after the current agenda section
+        const newContent = [
+            ...documentLines.slice(0, end),
+            '',
+            headingsContent,
+            ...documentLines.slice(end)
+        ].join('\n');
+        
+        // Update the main document
+        this.activeMarkdownView.editor.setValue(newContent);
+    }
+    
+    generateHeadingsFromList(lines) {
+        let result = [];
+        
+        for (const line of lines) {
+            // Skip empty lines
+            if (!line.trim()) {
+                continue;
+            }
+            
+            // Check if this is a top-level item (no indentation)
+            const indentMatch = line.match(/^(\s*)/);
+            const indent = indentMatch ? indentMatch[1].length : 0;
+            
+            // Only process non-indented items
+            if (indent === 0) {
+                // Remove list markers if present
+                const cleanLine = line.trim().replace(/^[-*+]\s+/, '');
+                
+                // Create H1 heading
+                result.push('# ' + cleanLine);
+            }
+        }
+        
+        return result.join('\n');
     }
 }
 
@@ -296,11 +360,30 @@ class AgendaPlugin extends obsidian.Plugin {
                 flex-direction: column;
             }
             
-            .agenda-header {
-                font-weight: bold;
+            .agenda-header-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
                 margin-bottom: 8px;
                 padding-bottom: 4px;
                 border-bottom: 1px solid var(--background-modifier-border);
+            }
+            
+            .agenda-header {
+                font-weight: bold;
+            }
+            
+            .agenda-button {
+                font-size: var(--font-small);
+                padding: 4px 8px;
+                border-radius: 4px;
+                cursor: pointer;
+                background-color: var(--interactive-accent);
+                color: var(--text-on-accent);
+            }
+            
+            .agenda-button:hover {
+                opacity: 0.9;
             }
             
             .agenda-content {
@@ -311,7 +394,7 @@ class AgendaPlugin extends obsidian.Plugin {
                 border-radius: 4px;
                 background-color: var(--background-primary);
                 font-family: var(--font-text);
-                font-size: small;
+                font-size: var(--font-small);
                 line-height: var(--line-height-tight);
                 resize: none;
             }
