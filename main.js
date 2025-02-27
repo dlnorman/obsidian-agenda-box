@@ -394,7 +394,7 @@ class AgendaPlugin extends obsidian.Plugin {
                 border-radius: 4px;
                 background-color: var(--background-primary);
                 font-family: var(--font-text);
-                font-size: var(--font-small);
+                font-size: small; /* var(--font-small); */
                 line-height: var(--line-height-tight);
                 resize: none;
             }
