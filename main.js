@@ -42,6 +42,7 @@ class AgendaView extends obsidian.ItemView {
         super(leaf);
         this.plugin = plugin;
         this.activeMarkdownView = null;
+        this.isEditMode = false;
     }
 
     getViewType() {
@@ -58,38 +59,51 @@ class AgendaView extends obsidian.ItemView {
 
     async onOpen() {
         this.contentEl.empty();
-        
+
         // Create container
         const container = this.contentEl.createDiv('agenda-container');
-        
-        // Create header row with button
+
+        // Create header row with buttons
         const headerRow = container.createDiv('agenda-header-row');
-        
+
         // Create header
         const header = headerRow.createDiv('agenda-header');
         header.textContent = this.plugin.settings.headingText;
-        
+
+        // Button group
+        const buttonGroup = headerRow.createDiv('agenda-button-group');
+
+        // Edit toggle button
+        this.editToggleButton = buttonGroup.createDiv('agenda-button agenda-secondary-button');
+        this.editToggleButton.textContent = "Edit";
+        this.editToggleButton.addEventListener('click', () => {
+            this.toggleEditMode();
+        });
+
         // Create Convert button
-        const convertButton = headerRow.createDiv('agenda-button');
+        const convertButton = buttonGroup.createDiv('agenda-button');
         convertButton.textContent = "Create Headings";
         convertButton.addEventListener('click', () => {
-            this.convertListToHeadings();
+            this.convertToHeadings();
         });
-        
-        // Create editable content area
+
+        // Rendered markdown display area
+        this.renderedContent = container.createDiv('agenda-rendered');
+        this.renderedContent.style.display = 'block';
+
+        // Editable textarea (hidden by default)
         this.editableContent = container.createEl('textarea', {
             cls: 'agenda-content',
-            attr: { 
-                placeholder: `No ${this.plugin.settings.headingText.toLowerCase()} found in current note...` 
+            attr: {
+                placeholder: `No ${this.plugin.settings.headingText.toLowerCase()} found in current note...`
             }
         });
-        
+        this.editableContent.style.display = 'none';
+
         // Listen for content changes with debouncing
         let updateTimer = null;
         const handleInput = () => {
-            if (updateTimer) {
-                clearTimeout(updateTimer);
-            }
+            if (updateTimer) clearTimeout(updateTimer);
             updateTimer = setTimeout(() => {
                 this.handleAgendaEdit();
             }, 250);
@@ -103,22 +117,85 @@ class AgendaView extends obsidian.ItemView {
         this.updateAgendaContent();
     }
 
+    toggleEditMode() {
+        if (this.isEditMode) {
+            // Switch to view mode
+            this.isEditMode = false;
+            this.editToggleButton.textContent = "Edit";
+            this.editToggleButton.removeClass('agenda-active-button');
+            this.editableContent.style.display = 'none';
+            this.renderedContent.style.display = 'block';
+            this.renderMarkdown();
+        } else {
+            // Switch to edit mode
+            this.isEditMode = true;
+            this.editToggleButton.textContent = "View";
+            this.editToggleButton.addClass('agenda-active-button');
+            this.renderedContent.style.display = 'none';
+            this.editableContent.style.display = 'block';
+            this.editableContent.focus();
+        }
+    }
+
     setActiveMarkdownView(view) {
         this.activeMarkdownView = view;
         this.updateAgendaContent();
     }
 
     async updateAgendaContent() {
-        if (!this.activeMarkdownView || this.editableContent === document.activeElement) {
-            return;
-        }
+        if (!this.activeMarkdownView) return;
+        // Don't update if textarea is focused (user is editing)
+        if (this.isEditMode && this.editableContent === document.activeElement) return;
 
         const content = this.activeMarkdownView.editor.getValue();
         const {text, start, end} = this.findAgendaSection(content);
-        
+
         this.editableContent.value = text;
         this.editableContent.dataset.start = start;
         this.editableContent.dataset.end = end;
+
+        if (!this.isEditMode) {
+            await this.renderMarkdown();
+        }
+    }
+
+    async renderMarkdown() {
+        if (!this.renderedContent) return;
+
+        this.renderedContent.empty();
+
+        const text = this.editableContent.value;
+        if (!text.trim()) {
+            this.renderedContent.createEl('p', {
+                cls: 'agenda-placeholder',
+                text: `No ${this.plugin.settings.headingText.toLowerCase()} found in current note...`
+            });
+            return;
+        }
+
+        const sourcePath = this.activeMarkdownView?.file?.path ?? '';
+
+        try {
+            await obsidian.MarkdownRenderer.render(
+                this.app,
+                text,
+                this.renderedContent,
+                sourcePath,
+                this
+            );
+        } catch (e) {
+            // Fallback for older API
+            try {
+                await obsidian.MarkdownRenderer.renderMarkdown(
+                    text,
+                    this.renderedContent,
+                    sourcePath,
+                    this
+                );
+            } catch (e2) {
+                this.renderedContent.createEl('pre', { text });
+            }
+        }
     }
 
     findAgendaSection(content) {
@@ -126,7 +203,7 @@ class AgendaView extends obsidian.ItemView {
         const headingRegex = new RegExp(`^#\\s*${headingText}\\s*$`, 'm');
         const lines = content.split('\n');
         const agendaIndex = lines.findIndex(line => headingRegex.test(line));
-        
+
         if (agendaIndex === -1) {
             return { text: '', start: -1, end: -1 };
         }
@@ -135,103 +212,125 @@ class AgendaView extends obsidian.ItemView {
         while (endIndex < lines.length && !lines[endIndex].startsWith('#')) {
             endIndex++;
         }
-        
+
         const text = lines.slice(agendaIndex + 1, endIndex).join('\n');
         return { text, start: agendaIndex, end: endIndex };
     }
 
     handleAgendaEdit() {
-        if (!this.activeMarkdownView) {
-            console.log('No active markdown view');
-            return;
-        }
+        if (!this.activeMarkdownView) return;
 
         const editor = this.activeMarkdownView.editor;
         const doc = editor.getValue();
         const lines = doc.split('\n');
         const text = this.editableContent.value;
-        
+
         const start = parseInt(this.editableContent.dataset.start);
         const end = parseInt(this.editableContent.dataset.end);
-        
+
         let newContent;
         if (start === -1) {
-            // If no section exists, create one at the end
             newContent = doc.trim() + '\n\n# ' + this.plugin.settings.headingText + '\n' + text;
         } else {
-            // Update existing section
             const beforeSection = lines.slice(0, start + 1).join('\n');
             const afterSection = lines.slice(end).join('\n');
             newContent = beforeSection + '\n' + text + (afterSection ? '\n' + afterSection : '');
         }
-        
+
         // Store cursor position
         const cursorPos = this.editableContent.selectionStart;
-        
-        // Update the editor
+
         editor.setValue(newContent);
-        
+
         // Update section boundaries
         const {start: newStart, end: newEnd} = this.findAgendaSection(newContent);
         this.editableContent.dataset.start = newStart;
         this.editableContent.dataset.end = newEnd;
-        
+
         // Restore cursor
         this.editableContent.selectionStart = cursorPos;
         this.editableContent.selectionEnd = cursorPos;
     }
-    
-    convertListToHeadings() {
+
+    convertToHeadings() {
         if (!this.activeMarkdownView) return;
-        
+
         const content = this.editableContent.value;
         if (!content) return;
-        
-        const lines = content.split('\n');
+
         const documentContent = this.activeMarkdownView.editor.getValue();
-        
-        // Find the end of the current agenda section to know where to append content
         const { end } = this.findAgendaSection(documentContent);
         const documentLines = documentContent.split('\n');
-        
-        // Generate headings content
-        const headingsContent = this.generateHeadingsFromList(lines);
-        
-        // Insert after the current agenda section
+
+        const headingsContent = this.isMarkdownTable(content)
+            ? this.generateHeadingsFromTable(content)
+            : this.generateHeadingsFromList(content.split('\n'));
+
         const newContent = [
             ...documentLines.slice(0, end),
             '',
             headingsContent,
             ...documentLines.slice(end)
         ].join('\n');
-        
-        // Update the main document
+
         this.activeMarkdownView.editor.setValue(newContent);
     }
-    
+
+    isMarkdownTable(content) {
+        const lines = content.trim().split('\n');
+        return lines.length >= 2
+            && lines[0].includes('|')
+            && /^\|[\s\-:|]+\|/.test(lines[1]);
+    }
+
+    generateHeadingsFromTable(content) {
+        const lines = content.trim().split('\n').filter(l => l.trim());
+        if (lines.length < 3) return '';
+
+        // Parse header row, stripping markdown formatting (bold, italic, etc.)
+        // Keep empty cells so column indices align with data rows
+        const stripMarkdown = s => s.replace(/\*+/g, '').replace(/_+/g, '').trim();
+        const splitCells = line => line.split('|').slice(1, -1).map(c => stripMarkdown(c));
+        const headers = splitCells(lines[0]);
+
+        // Find the best column to use as agenda items
+        const itemColumnNames = ['item', 'topic', 'agenda item', 'agenda', 'title', 'subject', 'description'];
+        let colIndex = headers.findIndex(h => itemColumnNames.includes(h.toLowerCase()));
+        if (colIndex < 0) {
+            // Default to first non-empty column
+            colIndex = headers.findIndex(h => h.length > 0);
+            if (colIndex < 0) colIndex = 0;
+        }
+
+        // Extract values from data rows (skip header row and separator row)
+        const items = [];
+        for (let i = 2; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line.trim() || line.trim() === '|') continue;
+            const cells = splitCells(line);
+            // Strip inline markdown from cell content, collapse <br> to space
+            const raw = (cells[colIndex] ?? '').replace(/<br\s*\/?>/gi, ' ').trim();
+            if (raw) items.push(raw);
+        }
+
+        return items.map(item => '# ' + item).join('\n');
+    }
+
     generateHeadingsFromList(lines) {
-        let result = [];
-        
+        const result = [];
+
         for (const line of lines) {
-            // Skip empty lines
-            if (!line.trim()) {
-                continue;
-            }
-            
-            // Check if this is a top-level item (no indentation)
+            if (!line.trim()) continue;
+
             const indentMatch = line.match(/^(\s*)/);
             const indent = indentMatch ? indentMatch[1].length : 0;
-            
-            // Only process non-indented items
+
             if (indent === 0) {
-                // Remove list markers if present
                 const cleanLine = line.trim().replace(/^[-*+]\s+/, '');
-                
-                // Create H1 heading
                 result.push('# ' + cleanLine);
             }
         }
-        
+
         return result.join('\n');
     }
 }
@@ -240,24 +339,19 @@ class AgendaPlugin extends obsidian.Plugin {
     async onload() {
         console.log('Loading Agenda plugin');
 
-        // Load settings
         this.settings = Object.assign(new AgendaPluginSettings(), await this.loadData());
 
-        // Add settings tab
         this.addSettingTab(new AgendaSettingTab(this.app, this));
 
-        // Register view
         this.registerView(
             VIEW_TYPE_AGENDA,
             (leaf) => new AgendaView(leaf, this)
         );
 
-        // Add ribbon icon
         this.addRibbonIcon('list-checks', 'Show Agenda', async () => {
             await this.toggleView();
         });
 
-        // Add command to toggle view
         this.addCommand({
             id: 'show-agenda-view',
             name: 'Show Agenda View',
@@ -272,7 +366,6 @@ class AgendaPlugin extends obsidian.Plugin {
             ]
         });
 
-        // Register events for content updates
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', (leaf) => {
                 if (leaf && leaf.view instanceof obsidian.MarkdownView) {
@@ -289,13 +382,10 @@ class AgendaPlugin extends obsidian.Plugin {
             })
         );
 
-        // Add styles
         this.addStyle();
 
-        // Try to create the view
         this.app.workspace.onLayoutReady(() => {
             this.initView();
-            // Set initial active view
             const activeLeaf = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
             if (activeLeaf) {
                 this.updateViews(activeLeaf);
@@ -359,7 +449,7 @@ class AgendaPlugin extends obsidian.Plugin {
                 display: flex;
                 flex-direction: column;
             }
-            
+
             .agenda-header-row {
                 display: flex;
                 justify-content: space-between;
@@ -368,11 +458,16 @@ class AgendaPlugin extends obsidian.Plugin {
                 padding-bottom: 4px;
                 border-bottom: 1px solid var(--background-modifier-border);
             }
-            
+
             .agenda-header {
                 font-weight: bold;
             }
-            
+
+            .agenda-button-group {
+                display: flex;
+                gap: 4px;
+            }
+
             .agenda-button {
                 font-size: var(--font-small);
                 padding: 4px 8px;
@@ -381,11 +476,60 @@ class AgendaPlugin extends obsidian.Plugin {
                 background-color: var(--interactive-accent);
                 color: var(--text-on-accent);
             }
-            
+
             .agenda-button:hover {
                 opacity: 0.9;
             }
-            
+
+            .agenda-secondary-button {
+                background-color: var(--background-modifier-border);
+                color: var(--text-normal);
+            }
+
+            .agenda-active-button {
+                background-color: var(--interactive-accent-hover);
+                color: var(--text-on-accent);
+            }
+
+            .agenda-rendered {
+                flex-grow: 1;
+                overflow-y: auto;
+                padding: 8px;
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 4px;
+                background-color: var(--background-primary);
+                font-size: small;
+                line-height: var(--line-height-tight);
+            }
+
+            .agenda-rendered p:first-child,
+            .agenda-rendered ul:first-child,
+            .agenda-rendered ol:first-child,
+            .agenda-rendered table:first-child {
+                margin-top: 0;
+            }
+
+            .agenda-rendered table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+
+            .agenda-rendered th,
+            .agenda-rendered td {
+                border: 1px solid var(--background-modifier-border);
+                padding: 4px 8px;
+                text-align: left;
+            }
+
+            .agenda-rendered th {
+                background-color: var(--background-secondary);
+            }
+
+            .agenda-placeholder {
+                color: var(--text-muted);
+                font-style: italic;
+            }
+
             .agenda-content {
                 width: 100%;
                 flex-grow: 1;
@@ -393,12 +537,13 @@ class AgendaPlugin extends obsidian.Plugin {
                 border: 1px solid var(--background-modifier-border);
                 border-radius: 4px;
                 background-color: var(--background-primary);
-                font-family: var(--font-text);
-                font-size: small; /* var(--font-small); */
+                font-family: var(--font-monospace);
+                font-size: small;
                 line-height: var(--line-height-tight);
                 resize: none;
+                box-sizing: border-box;
             }
-            
+
             .agenda-content:focus {
                 outline: none;
                 border-color: var(--interactive-accent);
